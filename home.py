@@ -122,6 +122,8 @@ def AdminVotingCommand(command):
         cursor = connection.cursor(dictionary=True)
         
         if command == 'start':
+            cursor.execute("UPDATE voter SET vote = 'N'")
+            cursor.execute("UPDATE candidate SET votes = 0")
             cursor.execute("UPDATE constituency SET verified = 'Y' WHERE constituency_id = %s", ('C00',))
             connection.commit()
             print("Voting started successfully!")
@@ -410,7 +412,20 @@ def deleteModel(constituency_name):
 
 @app.route('/VoterLogin')
 def VoterLogin():
-    return render_template('VoterLogin.html')
+    try:
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("SELECT verified FROM constituency where constituency_id = 'C00'")
+        verified = cursor.fetchone()
+        print("Admin is verified as:", verified['verified'])
+    except mysql.connector.Error as e:
+        print(f"Database error: {e}")
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'connection' in locals() and connection.is_connected():
+            connection.close()
+    return render_template('VoterLogin.html', verified=verified['verified'])
 
 @app.route('/getConstitutions', methods=['GET'])
 def getConstitutions():
@@ -635,18 +650,44 @@ def vote_preview():
                            PartyName=PartyName)
 
 
-@app.route('/Results', methods=['POST'])
-def Results():
-    constituency = request.json.get('Constituency')
+@app.route('/view_voting', methods=['POST'])
+def view_voting():
+    try:
+        data = request.get_json()
+        constituency_id = data.get('constituency_id')
+
+        # You could also store the data in session, or pass via URL
+        return jsonify({
+            "status": "success",
+            "redirect_url": url_for('view_voting_page', constituency_id=constituency_id)
+        })
+
+    except Exception as e:
+        print("Error viewing voting:", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/view_voting_page/<constituency_id>')
+def view_voting_page(constituency_id):
     connection = mysql.connector.connect(**db_config)
     cursor = connection.cursor(dictionary=True)
-    cursor.execute(
-        """
-        SELECT name, imagePath, symbolPath, contestType ,partyName, votes FROM candidate WHERE constituency_name = %s
-        """, (constituency,)
-    )
+
+    cursor.execute("""
+        SELECT name, aadhar, imagePath, symbolPath, contestType ,partyName, votes FROM candidate
+        WHERE constituency_id = %s
+        ORDER BY votes DESC
+    """, (constituency_id,))
     candidates = cursor.fetchall()
-    return render_template('Results.html', constituency=constituency, candidates=candidates)
+    print("Candidates imagePath:", candidates[0]['imagePath'])
+    print("Candidates symbolPath:", candidates[0]['symbolPath'])
+
+    cursor.execute("""
+        SELECT constituency_name FROM constituency WHERE constituency_id = %s
+    """, (constituency_id,))
+    constituency = cursor.fetchone()
+
+    return render_template('ViewVoting.html',
+                           constituency=constituency['constituency_name'],
+                           candidates=candidates)
 
 
 @app.route('/submitVoterRegistration', methods=['POST'])
